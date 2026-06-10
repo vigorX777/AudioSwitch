@@ -2,6 +2,8 @@
 
 AudioSwitch 是一个原生 macOS 菜单栏应用，用于快速选择系统默认输入和输出设备。选择输出设备时，应用会同步修改主输出和系统提示音输出。
 
+![AudioSwitch 功能介绍：快速切换输入、输出与系统提示音设备](assets/audioswitch-illustrations/01-audio-device-switching.png)
+
 ## 功能
 
 - 显示全部可用的内置、蓝牙、USB、显示器、AirPlay、虚拟及聚合音频设备
