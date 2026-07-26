@@ -188,13 +188,22 @@ private final class StatusItemInteractionButton: NSButton {
 private struct VolumeFeedbackView: View {
     let volumeState: OutputVolumeState
     let errorMessage: String?
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var primaryForeground: Color {
+        colorScheme == .dark ? .white : .black
+    }
+
+    private var secondaryForeground: Color {
+        primaryForeground.opacity(colorScheme == .dark ? 0.72 : 0.66)
+    }
 
     var body: some View {
         Group {
             if let errorMessage {
                 Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
                     .font(.caption)
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(primaryForeground)
                     .fixedSize(horizontal: false, vertical: true)
             } else if let volume = volumeState.volume {
                 HStack(spacing: 7) {
@@ -203,24 +212,25 @@ private struct VolumeFeedbackView: View {
                     Text(volumeState.isMuted == true ? "静音" : "\(Int((volume * 100).rounded()))%")
                         .font(.body.monospacedDigit().weight(.semibold))
                     Capsule()
-                        .fill(.primary.opacity(0.16))
+                        .fill(primaryForeground.opacity(0.16))
                         .frame(width: 54, height: 5)
                         .overlay(alignment: .leading) {
                             Capsule()
-                                .fill(.primary.opacity(0.8))
+                                .fill(primaryForeground.opacity(0.8))
                                 .frame(width: max(5, 54 * CGFloat(volume)), height: 5)
                         }
                 }
             } else {
                 Label("当前输出设备不支持音量调节", systemImage: "speaker.slash")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(secondaryForeground)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(.horizontal, 11)
         .frame(width: 152, height: 44)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+        .foregroundStyle(primaryForeground)
         .shadow(color: .black.opacity(0.18), radius: 7, y: 3)
     }
 }

@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-DMG_PATH="${1:-$ROOT_DIR/release/AudioSwitch-v0.1.4-macOS-universal-local.dmg}"
+DMG_PATH="${1:-$ROOT_DIR/release/AudioSwitch-v0.2.0-macOS-universal-local.dmg}"
 MOUNT_DIR="$(mktemp -d /tmp/AudioSwitch-verify.XXXXXX)"
 
 cleanup() {

@@ -4,7 +4,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 APP_NAME="AudioSwitch"
-VERSION="${VERSION:-0.1.4}"
+VERSION="${VERSION:-0.2.0}"
 NOTARY_PROFILE="${NOTARY_PROFILE:-AudioSwitch-notary}"
 DEVELOPER_ID_APPLICATION="${DEVELOPER_ID_APPLICATION:-}"
 RELEASE_DIR="$ROOT_DIR/release"

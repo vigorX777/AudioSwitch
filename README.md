@@ -53,8 +53,8 @@ DEVELOPER_ID_APPLICATION="Developer ID Application: Your Name (TEAMID)" \
 
 正式产物为：
 
-- `AudioSwitch-v0.1.4-macOS-universal.dmg`
-- `AudioSwitch-v0.1.4-macOS-universal.dmg.sha256`
+- `AudioSwitch-v0.2.0-macOS-universal.dmg`
+- `AudioSwitch-v0.2.0-macOS-universal.dmg.sha256`
 
 ## 许可证
 

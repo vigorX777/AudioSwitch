@@ -4,7 +4,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 APP_NAME="AudioSwitch"
-VERSION="${VERSION:-0.1.4}"
+VERSION="${VERSION:-0.2.0}"
 RELEASE_DIR="$ROOT_DIR/release"
 STAGING_DIR="$ROOT_DIR/.build/dmg-local"
 DMG_PATH="$RELEASE_DIR/${APP_NAME}-v${VERSION}-macOS-universal-local.dmg"

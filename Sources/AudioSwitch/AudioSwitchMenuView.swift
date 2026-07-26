@@ -7,6 +7,7 @@ struct AudioSwitchMenuView: View {
     @ObservedObject var audioDeviceService: AudioDeviceService
     @StateObject private var launchAtLogin = LaunchAtLoginController()
     @State private var didRefreshDevices = false
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -35,10 +36,24 @@ struct AudioSwitchMenuView: View {
             footer
         }
         .frame(width: 360)
+        .background(glassBacking)
+        .foregroundStyle(primaryForeground)
         .onAppear {
             audioDeviceService.refresh()
             launchAtLogin.refresh()
         }
+    }
+
+    private var primaryForeground: Color {
+        colorScheme == .dark ? .white : .black
+    }
+
+    private var secondaryForeground: Color {
+        primaryForeground.opacity(colorScheme == .dark ? 0.72 : 0.66)
+    }
+
+    private var glassBacking: Color {
+        colorScheme == .dark ? .black.opacity(0.36) : .white.opacity(0.52)
     }
 
     private var deviceListHeight: CGFloat {
@@ -60,13 +75,13 @@ struct AudioSwitchMenuView: View {
                         .font(.headline)
                     Text("快速切换输入与输出设备")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(secondaryForeground)
                 }
 
                 HStack(spacing: 6) {
                     Text("v\(appVersion)")
                         .font(.caption2.monospacedDigit())
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(secondaryForeground)
                         .padding(.horizontal, 7)
                         .padding(.vertical, 3)
                         .background(.quaternary, in: Capsule())
@@ -76,12 +91,12 @@ struct AudioSwitchMenuView: View {
                     } label: {
                         HStack(spacing: 5) {
                             Circle()
-                                .fill(launchAtLogin.isEnabled ? Color.green : Color.secondary)
+                                .fill(launchAtLogin.isEnabled ? Color.green : secondaryForeground)
                                 .frame(width: 6, height: 6)
                             Text(launchAtLogin.isEnabled ? "自启已开启" : "自启未开启")
                         }
                         .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(secondaryForeground)
                         .padding(.horizontal, 7)
                         .padding(.vertical, 3)
                         .background(.quaternary, in: Capsule())
@@ -141,7 +156,7 @@ struct AudioSwitchMenuView: View {
                 Spacer()
                 Text(volumeText)
                     .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(secondaryForeground)
             }
 
             HStack(spacing: 10) {
@@ -165,7 +180,7 @@ struct AudioSwitchMenuView: View {
             if !state.supportsVolume {
                 Text("当前输出设备不支持音量调节")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(secondaryForeground)
             }
         }
         .padding(12)
@@ -208,7 +223,7 @@ struct AudioSwitchMenuView: View {
             if devices.isEmpty {
                 Text("没有可用设备")
                     .font(.callout)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(secondaryForeground)
                     .padding(.vertical, 8)
             } else {
                 VStack(spacing: 4) {
@@ -278,14 +293,14 @@ struct AudioSwitchMenuView: View {
             }
             .font(.caption)
             .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(secondaryForeground)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
     }
 
     private var appVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.3"
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.2.0"
     }
 }
 
@@ -295,13 +310,18 @@ private struct DeviceRow: View {
     let isEnabled: Bool
     let disabledReason: String
     let action: () -> Void
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var secondaryForeground: Color {
+        colorScheme == .dark ? .white.opacity(0.72) : .black.opacity(0.66)
+    }
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 10) {
                 Image(systemName: device.transportType.systemImageName)
                     .frame(width: 20)
-                    .foregroundStyle(isEnabled ? Color.accentColor : Color.secondary)
+                    .foregroundStyle(isEnabled ? Color.accentColor : secondaryForeground)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(device.name)
@@ -313,7 +333,7 @@ private struct DeviceRow: View {
                         }
                     }
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(secondaryForeground)
                 }
 
                 Spacer()
