@@ -6,10 +6,14 @@ import SwiftUI
 struct AudioSwitchMenuView: View {
     @ObservedObject var audioDeviceService: AudioDeviceService
     @StateObject private var launchAtLogin = LaunchAtLoginController()
+    @State private var didRefreshDevices = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
+
+            Divider()
+            volumeSection
 
             Divider()
 
@@ -93,11 +97,15 @@ struct AudioSwitchMenuView: View {
 
             Button {
                 audioDeviceService.refresh()
+                didRefreshDevices = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                    didRefreshDevices = false
+                }
             } label: {
-                Image(systemName: "arrow.clockwise")
+                Image(systemName: didRefreshDevices ? "checkmark" : "arrow.clockwise")
             }
             .buttonStyle(.borderless)
-            .help("刷新设备")
+            .help(didRefreshDevices ? "已刷新设备" : "刷新设备")
         }
         .padding(12)
     }
@@ -117,6 +125,50 @@ struct AudioSwitchMenuView: View {
             action: { audioDeviceService.selectOutput(uid: $0.uid) },
             note: outputSynchronizationNote
         )
+    }
+
+    private var volumeSection: some View {
+        let state = audioDeviceService.outputVolumeState
+        let volume = Binding<Double>(
+            get: { Double(state.volume ?? 0) },
+            set: { audioDeviceService.setOutputVolume(Float($0)) }
+        )
+
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label("音量", systemImage: state.isMuted == true ? "speaker.slash" : "speaker.wave.2")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Text(volumeText)
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack(spacing: 10) {
+                VolumeSlider(value: volume, isEnabled: state.supportsVolume) { event in
+                    guard event.scrollingDeltaY != 0 else { return }
+                    audioDeviceService.adjustOutputVolume(
+                        by: event.scrollingDeltaY > 0 ? 0.05 : -0.05
+                    )
+                }
+
+                Button {
+                    audioDeviceService.setOutputMuted(!(state.isMuted ?? false))
+                } label: {
+                    Image(systemName: state.isMuted == true ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                }
+                .buttonStyle(.borderless)
+                .disabled(!state.supportsMute)
+                .help(state.supportsMute ? "静音/取消静音" : "当前输出设备不支持静音")
+            }
+
+            if !state.supportsVolume {
+                Text("当前输出设备不支持音量调节")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(12)
     }
 
     private var inputSection: some View {
@@ -186,6 +238,14 @@ struct AudioSwitchMenuView: View {
 
     private var combinedErrorMessage: String? {
         audioDeviceService.errorMessage ?? launchAtLogin.errorMessage
+    }
+
+    private var volumeText: String {
+        let state = audioDeviceService.outputVolumeState
+        guard let volume = state.volume else {
+            return "不可调"
+        }
+        return state.isMuted == true ? "静音" : "\(Int((volume * 100).rounded()))%"
     }
 
     private func errorBanner(_ message: String) -> some View {

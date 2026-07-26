@@ -6,11 +6,36 @@ package protocol AudioHardwareAccess: AnyObject {
     func defaultInputDeviceID() throws -> AudioObjectID
     func defaultOutputDeviceID() throws -> AudioObjectID
     func defaultSystemOutputDeviceID() throws -> AudioObjectID
+    func outputVolumeState() throws -> OutputVolumeState
     func setDefaultInputDeviceID(_ deviceID: AudioObjectID) throws
     func setDefaultOutputDeviceID(_ deviceID: AudioObjectID) throws
     func setDefaultSystemOutputDeviceID(_ deviceID: AudioObjectID) throws
+    func setOutputVolume(_ volume: Float) throws
+    func setOutputMuted(_ isMuted: Bool) throws
     func startMonitoring(_ onChange: @escaping @Sendable () -> Void) throws
     func stopMonitoring()
+}
+
+package struct OutputVolumeState: Equatable, Sendable {
+    package let volume: Float?
+    package let isMuted: Bool?
+    package let isVolumeAdjustable: Bool
+    package let isMuteAdjustable: Bool
+
+    package init(
+        volume: Float?,
+        isMuted: Bool?,
+        isVolumeAdjustable: Bool? = nil,
+        isMuteAdjustable: Bool? = nil
+    ) {
+        self.volume = volume
+        self.isMuted = isMuted
+        self.isVolumeAdjustable = isVolumeAdjustable ?? (volume != nil)
+        self.isMuteAdjustable = isMuteAdjustable ?? (isMuted != nil)
+    }
+
+    package var supportsVolume: Bool { volume != nil && isVolumeAdjustable }
+    package var supportsMute: Bool { isMuted != nil && isMuteAdjustable }
 }
 
 package enum AudioDeviceError: LocalizedError {
@@ -18,6 +43,8 @@ package enum AudioDeviceError: LocalizedError {
     case deviceUnavailable
     case unsupportedInput(String)
     case unsupportedSynchronizedOutput(String)
+    case unsupportedOutputVolume
+    case unsupportedOutputMute
     case stateVerificationFailed(String)
     case switchFailed(primary: String, rollback: [String])
 
@@ -31,6 +58,10 @@ package enum AudioDeviceError: LocalizedError {
             return "设备“\(name)”不能设为默认输入设备。"
         case let .unsupportedSynchronizedOutput(name):
             return "设备“\(name)”不能同时设为默认输出和系统提示音输出。"
+        case .unsupportedOutputVolume:
+            return "当前输出设备不支持音量调节。"
+        case .unsupportedOutputMute:
+            return "当前输出设备不支持静音。"
         case let .stateVerificationFailed(message):
             return message
         case let .switchFailed(primary, rollback):

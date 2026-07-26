@@ -102,6 +102,30 @@ struct AudioSwitchCoreChecks {
             runner.expect(service.defaultSystemOutputDeviceID == 2)
         }
 
+        runner.run("输出音量与静音") {
+            let hardware = MockAudioHardware(volume: 0.4, isMuted: false)
+            let service = AudioDeviceService(hardware: hardware, monitorChanges: false)
+            runner.expect(service.outputVolumeState == OutputVolumeState(volume: 0.4, isMuted: false))
+
+            service.setOutputVolume(0.7)
+            runner.expect(hardware.volume == 0.7)
+
+            service.setOutputMuted(true)
+            runner.expect(hardware.isMuted == true)
+
+            service.adjustOutputVolume(by: 0.05)
+            runner.expect(hardware.volume == 0.75)
+            runner.expect(hardware.isMuted == false)
+            runner.expect(hardware.writes.suffix(2) == [.muted(false), .volume(0.75)])
+        }
+
+        runner.run("不支持的输出音量") {
+            let hardware = MockAudioHardware(volume: nil, isMuted: nil)
+            let service = AudioDeviceService(hardware: hardware, monitorChanges: false)
+            service.adjustOutputVolume(by: 0.05)
+            runner.expect(service.errorMessage == AudioDeviceError.unsupportedOutputVolume.localizedDescription)
+        }
+
         runner.run("Core Audio 设备枚举与监听") {
             let hardware = CoreAudioHardwareAccess()
             let devices = try hardware.allDevices()
@@ -133,6 +157,21 @@ struct AudioSwitchCoreChecks {
             try AudioDeviceSwitchCoordinator.switchInput(to: input, using: hardware)
             if outputID == systemOutputID {
                 try AudioDeviceSwitchCoordinator.switchOutput(to: output, using: hardware)
+            }
+        }
+
+        runner.run("Core Audio 输出音量状态") {
+            let hardware = CoreAudioHardwareAccess()
+            let state = try hardware.outputVolumeState()
+
+            if let volume = state.volume {
+                runner.expect((0 ... 1).contains(volume))
+            }
+            if let volume = state.volume, state.supportsVolume {
+                try hardware.setOutputVolume(volume)
+            }
+            if let isMuted = state.isMuted, state.supportsMute {
+                try hardware.setOutputMuted(isMuted)
             }
         }
 
@@ -219,6 +258,8 @@ private enum HardwareWrite: Equatable {
     case input(AudioObjectID)
     case output(AudioObjectID)
     case systemOutput(AudioObjectID)
+    case volume(Float)
+    case muted(Bool)
 }
 
 private final class MockAudioHardware: AudioHardwareAccess {
@@ -226,6 +267,8 @@ private final class MockAudioHardware: AudioHardwareAccess {
     var inputID: AudioObjectID
     var outputID: AudioObjectID
     var systemOutputID: AudioObjectID
+    var volume: Float?
+    var isMuted: Bool?
     var writes: [HardwareWrite] = []
     var failNextSystemOutputWrite = false
 
@@ -233,18 +276,25 @@ private final class MockAudioHardware: AudioHardwareAccess {
         devices: [AudioDeviceDescriptor] = [],
         inputID: AudioObjectID = 1,
         outputID: AudioObjectID = 1,
-        systemOutputID: AudioObjectID = 1
+        systemOutputID: AudioObjectID = 1,
+        volume: Float? = 0.5,
+        isMuted: Bool? = false
     ) {
         self.devices = devices
         self.inputID = inputID
         self.outputID = outputID
         self.systemOutputID = systemOutputID
+        self.volume = volume
+        self.isMuted = isMuted
     }
 
     func allDevices() throws -> [AudioDeviceDescriptor] { devices }
     func defaultInputDeviceID() throws -> AudioObjectID { inputID }
     func defaultOutputDeviceID() throws -> AudioObjectID { outputID }
     func defaultSystemOutputDeviceID() throws -> AudioObjectID { systemOutputID }
+    func outputVolumeState() throws -> OutputVolumeState {
+        OutputVolumeState(volume: volume, isMuted: isMuted)
+    }
 
     func setDefaultInputDeviceID(_ deviceID: AudioObjectID) throws {
         writes.append(.input(deviceID))
@@ -263,6 +313,22 @@ private final class MockAudioHardware: AudioHardwareAccess {
             throw MockFailure.requested
         }
         systemOutputID = deviceID
+    }
+
+    func setOutputVolume(_ volume: Float) throws {
+        guard self.volume != nil else {
+            throw AudioDeviceError.unsupportedOutputVolume
+        }
+        self.volume = min(max(volume, 0), 1)
+        writes.append(.volume(self.volume!))
+    }
+
+    func setOutputMuted(_ isMuted: Bool) throws {
+        guard self.isMuted != nil else {
+            throw AudioDeviceError.unsupportedOutputMute
+        }
+        self.isMuted = isMuted
+        writes.append(.muted(isMuted))
     }
 
     func startMonitoring(_ onChange: @escaping @Sendable () -> Void) throws {}

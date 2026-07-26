@@ -9,6 +9,7 @@ package final class AudioDeviceService: ObservableObject {
     @Published package private(set) var defaultInputDeviceID: AudioObjectID?
     @Published package private(set) var defaultOutputDeviceID: AudioObjectID?
     @Published package private(set) var defaultSystemOutputDeviceID: AudioObjectID?
+    @Published package private(set) var outputVolumeState = OutputVolumeState(volume: nil, isMuted: nil)
     @Published package private(set) var errorMessage: String?
 
     private let hardware: AudioHardwareAccess
@@ -38,10 +39,12 @@ package final class AudioDeviceService: ObservableObject {
             let inputID = try? hardware.defaultInputDeviceID()
             let outputID = try? hardware.defaultOutputDeviceID()
             let systemOutputID = try? hardware.defaultSystemOutputDeviceID()
+            let volumeState = try? hardware.outputVolumeState()
 
             defaultInputDeviceID = inputID
             defaultOutputDeviceID = outputID
             defaultSystemOutputDeviceID = systemOutputID
+            outputVolumeState = volumeState ?? OutputVolumeState(volume: nil, isMuted: nil)
             inputDevices = AudioDeviceCatalog.sorted(
                 devices.filter(\.hasInput),
                 currentDeviceID: inputID
@@ -83,7 +86,45 @@ package final class AudioDeviceService: ObservableObject {
         errorMessage = nil
     }
 
+    package func setOutputVolume(_ volume: Float) {
+        performOutputControl {
+            if outputVolumeState.isMuted == true {
+                try hardware.setOutputMuted(false)
+            }
+            try hardware.setOutputVolume(volume)
+        }
+    }
+
+    package func adjustOutputVolume(by delta: Float) {
+        guard let currentVolume = outputVolumeState.volume else {
+            errorMessage = AudioDeviceError.unsupportedOutputVolume.localizedDescription
+            return
+        }
+        performOutputControl {
+            if outputVolumeState.isMuted == true {
+                try hardware.setOutputMuted(false)
+            }
+            try hardware.setOutputVolume(currentVolume + delta)
+        }
+    }
+
+    package func setOutputMuted(_ isMuted: Bool) {
+        performOutputControl {
+            try hardware.setOutputMuted(isMuted)
+        }
+    }
+
     private func performSwitch(_ operation: () throws -> Void) {
+        do {
+            try operation()
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        refresh()
+    }
+
+    private func performOutputControl(_ operation: () throws -> Void) {
         do {
             try operation()
             errorMessage = nil

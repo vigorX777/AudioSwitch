@@ -1,21 +1,23 @@
 import AppKit
-import AudioSwitchCore
 import SwiftUI
 
 @main
-@MainActor
 struct AudioSwitchApp: App {
-    @StateObject private var audioDeviceService: AudioDeviceService
-
-    init() {
-        NSApplication.shared.setActivationPolicy(.accessory)
-        _audioDeviceService = StateObject(wrappedValue: AudioDeviceService())
-    }
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
-        MenuBarExtra("AudioSwitch", systemImage: "speaker.wave.2") {
-            AudioSwitchMenuView(audioDeviceService: audioDeviceService)
+        Settings {
+            EmptyView()
         }
-        .menuBarExtraStyle(.window)
+    }
+}
+
+@MainActor
+private final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var statusController: AudioSwitchStatusController?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApplication.shared.setActivationPolicy(.accessory)
+        statusController = AudioSwitchStatusController()
     }
 }

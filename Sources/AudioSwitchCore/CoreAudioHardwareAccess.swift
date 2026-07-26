@@ -4,7 +4,9 @@ import Foundation
 package final class CoreAudioHardwareAccess: AudioHardwareAccess, @unchecked Sendable {
     private let systemObjectID = AudioObjectID(kAudioObjectSystemObject)
     private let listenerQueue = DispatchQueue(label: "com.vigor.AudioSwitch.core-audio-listeners")
-    private var listeners: [(AudioObjectPropertyAddress, AudioObjectPropertyListenerBlock)] = []
+    private var systemListeners: [PropertyListener] = []
+    private var outputListeners: [PropertyListener] = []
+    private var monitoringCallback: (@Sendable () -> Void)?
 
     package init() {}
 
@@ -48,6 +50,18 @@ package final class CoreAudioHardwareAccess: AudioHardwareAccess, @unchecked Sen
         try readDefaultDevice(selector: kAudioHardwarePropertyDefaultSystemOutputDevice, operation: "读取系统提示音输出设备")
     }
 
+    package func outputVolumeState() throws -> OutputVolumeState {
+        let deviceID = try defaultOutputDeviceID()
+        let mutePropertyAddress = muteAddress()
+        return OutputVolumeState(
+            volume: readOutputVolume(deviceID: deviceID),
+            isMuted: readOutputMute(deviceID: deviceID),
+            isVolumeAdjustable: !writableVolumeAddresses(deviceID: deviceID).isEmpty,
+            isMuteAdjustable: hasProperty(deviceID: deviceID, address: mutePropertyAddress)
+                && isSettable(deviceID: deviceID, address: mutePropertyAddress)
+        )
+    }
+
     package func setDefaultInputDeviceID(_ deviceID: AudioObjectID) throws {
         try writeDefaultDevice(
             deviceID,
@@ -72,8 +86,61 @@ package final class CoreAudioHardwareAccess: AudioHardwareAccess, @unchecked Sen
         )
     }
 
+    package func setOutputVolume(_ volume: Float) throws {
+        let deviceID = try defaultOutputDeviceID()
+        let addresses = writableVolumeAddresses(deviceID: deviceID)
+        guard !addresses.isEmpty else {
+            throw AudioDeviceError.unsupportedOutputVolume
+        }
+
+        let oldValues = try addresses.map { address in
+            try readScalar(
+                objectID: deviceID,
+                address: address,
+                operation: "读取当前音量"
+            ) as Float32
+        }
+        let newValue = Float32(min(max(volume, 0), 1))
+
+        do {
+            for address in addresses {
+                try writeScalar(
+                    newValue,
+                    objectID: deviceID,
+                    address: address,
+                    operation: "设置输出音量"
+                )
+            }
+        } catch {
+            for (address, oldValue) in zip(addresses, oldValues) {
+                try? writeScalar(
+                    oldValue,
+                    objectID: deviceID,
+                    address: address,
+                    operation: "恢复输出音量"
+                )
+            }
+            throw error
+        }
+    }
+
+    package func setOutputMuted(_ isMuted: Bool) throws {
+        let deviceID = try defaultOutputDeviceID()
+        let address = muteAddress()
+        guard hasProperty(deviceID: deviceID, address: address), isSettable(deviceID: deviceID, address: address) else {
+            throw AudioDeviceError.unsupportedOutputMute
+        }
+        try writeScalar(
+            UInt32(isMuted ? 1 : 0),
+            objectID: deviceID,
+            address: address,
+            operation: "设置输出静音"
+        )
+    }
+
     package func startMonitoring(_ onChange: @escaping @Sendable () -> Void) throws {
         stopMonitoring()
+        monitoringCallback = onChange
 
         let selectors: [AudioObjectPropertySelector] = [
             kAudioHardwarePropertyDevices,
@@ -84,19 +151,21 @@ package final class CoreAudioHardwareAccess: AudioHardwareAccess, @unchecked Sen
 
         do {
             for selector in selectors {
-                var address = propertyAddress(selector)
+                let address = propertyAddress(selector)
                 let listener: AudioObjectPropertyListenerBlock = { _, _ in
+                    if selector == kAudioHardwarePropertyDefaultOutputDevice {
+                        self.refreshOutputListeners()
+                    }
                     onChange()
                 }
-                let status = AudioObjectAddPropertyListenerBlock(
-                    systemObjectID,
-                    &address,
-                    listenerQueue,
-                    listener
+                try addListener(
+                    objectID: systemObjectID,
+                    address: address,
+                    listener: listener,
+                    to: &systemListeners
                 )
-                try check(status, operation: "监听音频设备变化")
-                listeners.append((address, listener))
             }
+            refreshOutputListeners()
         } catch {
             stopMonitoring()
             throw error
@@ -104,16 +173,9 @@ package final class CoreAudioHardwareAccess: AudioHardwareAccess, @unchecked Sen
     }
 
     package func stopMonitoring() {
-        for (storedAddress, listener) in listeners {
-            var address = storedAddress
-            AudioObjectRemovePropertyListenerBlock(
-                systemObjectID,
-                &address,
-                listenerQueue,
-                listener
-            )
-        }
-        listeners.removeAll()
+        removeListeners(&systemListeners)
+        removeListeners(&outputListeners)
+        monitoringCallback = nil
     }
 
     private func makeDescriptor(deviceID: AudioObjectID) throws -> AudioDeviceDescriptor {
@@ -168,6 +230,147 @@ package final class CoreAudioHardwareAccess: AudioHardwareAccess, @unchecked Sen
             operation: "读取设备音频流"
         )
         return !streamIDs.isEmpty
+    }
+
+    private func readOutputVolume(deviceID: AudioObjectID) -> Float? {
+        let values = volumeAddresses(deviceID: deviceID).compactMap { address in
+            try? readScalar(
+                objectID: deviceID,
+                address: address,
+                operation: "读取输出音量"
+            ) as Float32
+        }
+        guard !values.isEmpty else {
+            return nil
+        }
+        return Float(values.reduce(0, +) / Float32(values.count))
+    }
+
+    private func readOutputMute(deviceID: AudioObjectID) -> Bool? {
+        let address = muteAddress()
+        guard hasProperty(deviceID: deviceID, address: address),
+              let value: UInt32 = try? readScalar(
+                  objectID: deviceID,
+                  address: address,
+                  operation: "读取输出静音"
+              )
+        else {
+            return nil
+        }
+        return value != 0
+    }
+
+    private func volumeAddresses(deviceID: AudioObjectID) -> [AudioObjectPropertyAddress] {
+        let masterAddress = volumeAddress(element: kAudioObjectPropertyElementMain)
+        if hasProperty(deviceID: deviceID, address: masterAddress) {
+            return [masterAddress]
+        }
+
+        return (1 ... outputChannelCount(deviceID: deviceID)).compactMap { channel in
+            let address = volumeAddress(element: AudioObjectPropertyElement(channel))
+            return hasProperty(deviceID: deviceID, address: address) ? address : nil
+        }
+    }
+
+    private func writableVolumeAddresses(deviceID: AudioObjectID) -> [AudioObjectPropertyAddress] {
+        let masterAddress = volumeAddress(element: kAudioObjectPropertyElementMain)
+        if hasProperty(deviceID: deviceID, address: masterAddress), isSettable(deviceID: deviceID, address: masterAddress) {
+            return [masterAddress]
+        }
+
+        return (1 ... outputChannelCount(deviceID: deviceID)).compactMap { channel in
+            let address = volumeAddress(element: AudioObjectPropertyElement(channel))
+            return hasProperty(deviceID: deviceID, address: address) && isSettable(deviceID: deviceID, address: address)
+                ? address
+                : nil
+        }
+    }
+
+    private func outputChannelCount(deviceID: AudioObjectID) -> Int {
+        let address = propertyAddress(kAudioDevicePropertyStreamConfiguration, scope: kAudioDevicePropertyScopeOutput)
+        guard let channelCount = try? readOutputChannelCount(
+            objectID: deviceID,
+            address: address,
+            operation: "读取输出声道"
+        )
+        else {
+            return 0
+        }
+        return channelCount
+    }
+
+    private func volumeAddress(element: AudioObjectPropertyElement) -> AudioObjectPropertyAddress {
+        AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyVolumeScalar,
+            mScope: kAudioDevicePropertyScopeOutput,
+            mElement: element
+        )
+    }
+
+    private func muteAddress() -> AudioObjectPropertyAddress {
+        AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyMute,
+            mScope: kAudioDevicePropertyScopeOutput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+    }
+
+    private func hasProperty(deviceID: AudioObjectID, address originalAddress: AudioObjectPropertyAddress) -> Bool {
+        var address = originalAddress
+        return AudioObjectHasProperty(deviceID, &address)
+    }
+
+    private func isSettable(deviceID: AudioObjectID, address originalAddress: AudioObjectPropertyAddress) -> Bool {
+        var address = originalAddress
+        var settable = DarwinBoolean(false)
+        return AudioObjectIsPropertySettable(deviceID, &address, &settable) == noErr && settable.boolValue
+    }
+
+    private func refreshOutputListeners() {
+        removeListeners(&outputListeners)
+        guard let callback = monitoringCallback,
+              let deviceID = try? defaultOutputDeviceID()
+        else {
+            return
+        }
+
+        let addresses = volumeAddresses(deviceID: deviceID) + [muteAddress()]
+        for address in addresses where hasProperty(deviceID: deviceID, address: address) {
+            let listener: AudioObjectPropertyListenerBlock = { _, _ in callback() }
+            try? addListener(
+                objectID: deviceID,
+                address: address,
+                listener: listener,
+                to: &outputListeners
+            )
+        }
+    }
+
+    private func addListener(
+        objectID: AudioObjectID,
+        address originalAddress: AudioObjectPropertyAddress,
+        listener: @escaping AudioObjectPropertyListenerBlock,
+        to listeners: inout [PropertyListener]
+    ) throws {
+        var address = originalAddress
+        try check(
+            AudioObjectAddPropertyListenerBlock(objectID, &address, listenerQueue, listener),
+            operation: "监听音频设备变化"
+        )
+        listeners.append(PropertyListener(objectID: objectID, address: address, listener: listener))
+    }
+
+    private func removeListeners(_ listeners: inout [PropertyListener]) {
+        for storedListener in listeners {
+            var address = storedListener.address
+            AudioObjectRemovePropertyListenerBlock(
+                storedListener.objectID,
+                &address,
+                listenerQueue,
+                storedListener.listener
+            )
+        }
+        listeners.removeAll()
     }
 
     private func readBooleanIfAvailable(
@@ -254,6 +457,52 @@ package final class CoreAudioHardwareAccess: AudioHardwareAccess, @unchecked Sen
         return pointer.load(as: T.self)
     }
 
+    private func writeScalar<T>(
+        _ value: T,
+        objectID: AudioObjectID,
+        address originalAddress: AudioObjectPropertyAddress,
+        operation: String
+    ) throws {
+        var address = originalAddress
+        var value = value
+        let status = withUnsafePointer(to: &value) { pointer in
+            AudioObjectSetPropertyData(
+                objectID,
+                &address,
+                0,
+                nil,
+                UInt32(MemoryLayout<T>.size),
+                pointer
+            )
+        }
+        try check(status, operation: operation)
+    }
+
+    private func readOutputChannelCount(
+        objectID: AudioObjectID,
+        address originalAddress: AudioObjectPropertyAddress,
+        operation: String
+    ) throws -> Int {
+        var address = originalAddress
+        var size: UInt32 = 0
+        try check(
+            AudioObjectGetPropertyDataSize(objectID, &address, 0, nil, &size),
+            operation: operation
+        )
+        let rawPointer = UnsafeMutableRawPointer.allocate(
+            byteCount: Int(size),
+            alignment: MemoryLayout<AudioBufferList>.alignment
+        )
+        defer { rawPointer.deallocate() }
+        var mutableAddress = originalAddress
+        try check(
+            AudioObjectGetPropertyData(objectID, &mutableAddress, 0, nil, &size, rawPointer),
+            operation: operation
+        )
+        let list = UnsafeMutableAudioBufferListPointer(rawPointer.assumingMemoryBound(to: AudioBufferList.self))
+        return list.reduce(0) { $0 + Int($1.mNumberChannels) }
+    }
+
     private func readArray<T>(
         objectID: AudioObjectID,
         address originalAddress: AudioObjectPropertyAddress,
@@ -295,4 +544,10 @@ package final class CoreAudioHardwareAccess: AudioHardwareAccess, @unchecked Sen
             throw AudioDeviceError.coreAudio(operation: operation, status: status)
         }
     }
+}
+
+private struct PropertyListener {
+    let objectID: AudioObjectID
+    let address: AudioObjectPropertyAddress
+    let listener: AudioObjectPropertyListenerBlock
 }
